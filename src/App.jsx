@@ -1,24 +1,43 @@
-import { Routes, Route } from 'react-router-dom'
-import './App.css'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { AuthProvider } from './context/AuthContext'
+import ProtectedRoute from './components/ProtectedRoute'
 
-import Landing from './pages/Landing'
-import Login from './pages/Login'
-import TrainerDashboard from './pages/TrainerDashboard'
-import StudentDashboard from './pages/StudentDashboard'
-import AdminDashboard from './pages/AdminDashboard'
-import StudentRegistration from './pages/StudentRegistration'
+// We will build these soon
+import Login from './pages/auth/Login'
+import AdminLogin from './pages/auth/AdminLogin'
+import AdminDashboard from './pages/admin/Dashboard'
+import TrainerDashboard from './pages/trainer/Dashboard'
+import StudentDashboard from './pages/student/Dashboard'
 
-function App() {
+export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/trainer-dashboard" element={<TrainerDashboard />} />
-      <Route path="/student-dashboard" element={<StudentDashboard />} />
-      <Route path="/admin-dashboard" element={<AdminDashboard />} />
-      <Route path="/student-registration" element={<StudentRegistration />} />
-    </Routes>
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Public Routes */}
+          <Route path="/login" element={<Login />} />
+          <Route path="/admin/login" element={<AdminLogin />} />
+
+          {/* Admin Routes */}
+          <Route element={<ProtectedRoute allow={['admin']} />}>
+            <Route path="/admin" element={<AdminDashboard />} />
+            {/* Future admin routes will go here */}
+          </Route>
+
+          {/* Trainer Routes */}
+          <Route element={<ProtectedRoute allow={['trainer']} />}>
+            <Route path="/trainer" element={<TrainerDashboard />} />
+          </Route>
+
+          {/* Student Routes */}
+          <Route element={<ProtectedRoute allow={['student']} />}>
+            <Route path="/student" element={<StudentDashboard />} />
+          </Route>
+
+          {/* Catch-all */}
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </BrowserRouter>
+    </AuthProvider>
   )
 }
-
-export default App
