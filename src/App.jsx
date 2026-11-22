@@ -8,7 +8,9 @@ import AdminLogin from './pages/auth/AdminLogin'
 // Dashboards
 import StudentDashboard from './pages/student/Dashboard'
 // import TrainerDashboard from './pages/trainer/Dashboard'
+import TrainerDashboard from './pages/trainer/Dashboard'
 // import AdminDashboard from './pages/admin/Dashboard'
+
 
 function App() {
   return (
@@ -20,6 +22,7 @@ function App() {
       <Route path="/admin/login" element={<AdminLogin />} />
       
       {/* Dashboard Routes */}
+      <Route path="/trainer/dashboard" element={<TrainerDashboard />} />
       <Route path="/student/dashboard" element={<StudentDashboard />} />
       
       {/* Catch-all: If URL doesn't match anything, go to landing page */}
