@@ -1,13 +1,14 @@
 import { Routes, Route } from 'react-router-dom'
-
-// Landing Page
 import Landing from './pages/Landing'
+import Login from './pages/auth/Login'
 
-export default function App() {
+function App() {
   return (
     <Routes>
-      // Main Landing Page
       <Route path="/" element={<Landing />} />
+      <Route path="/login" element={<Login />} />
     </Routes>
   )
 }
+
+export default App
