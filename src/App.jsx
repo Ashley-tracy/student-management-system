@@ -10,7 +10,7 @@ import StudentDashboard from './pages/student/Dashboard'
 // import TrainerDashboard from './pages/trainer/Dashboard'
 import TrainerDashboard from './pages/trainer/Dashboard'
 // import AdminDashboard from './pages/admin/Dashboard'
-
+import AdminDashboard from './pages/admin/Dashboard'
 
 function App() {
   return (
@@ -24,7 +24,8 @@ function App() {
       {/* Dashboard Routes */}
       <Route path="/trainer/dashboard" element={<TrainerDashboard />} />
       <Route path="/student/dashboard" element={<StudentDashboard />} />
-      
+       <Route path="/admin/dashboard" element={<AdminDashboard />} />
+       
       {/* Catch-all: If URL doesn't match anything, go to landing page */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
