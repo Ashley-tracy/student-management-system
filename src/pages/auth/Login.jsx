@@ -14,7 +14,7 @@ function Login() {
     setLoading(true)
     setError(null)
 
-    // Attempt to sign in with Supabase
+    // 1. Sign in
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
       email,
       password,
@@ -26,23 +26,29 @@ function Login() {
       return
     }
 
-    // Fetch their profile to determine their role
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', authData.user.id)
-      .single()
+    // 2. Use the secure RPC function to get the role safely
+    const { data: role, error: roleError } = await supabase.rpc('get_my_role')
 
-    if (profileError) {
-      setError('Could not fetch user profile.')
+    if (roleError || !role) {
+      await supabase.auth.signOut()
+      setError('Could not verify user role. Please try again.')
       setLoading(false)
       return
     }
 
-    // Redirect based on role
-    if (profile.role === 'admin') navigate('/admin')
-    else if (profile.role === 'trainer') navigate('/trainer')
-    else navigate('/student')
+    // 3. Route them to the correct dashboard based on role
+    if (role === 'admin') {
+      navigate('/admin/dashboard')
+    } else if (role === 'trainer') {
+      navigate('/trainer/dashboard')
+    } else if (role === 'student') {
+      navigate('/student/dashboard')
+    } else {
+      await supabase.auth.signOut()
+      setError('Unknown user role.')
+    }
+    
+    setLoading(false)
   }
 
   return (

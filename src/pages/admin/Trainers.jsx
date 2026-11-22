@@ -4,35 +4,46 @@ import { supabase } from '../../lib/supabaseClient'
 
 function Trainers() {
   const [trainers, setTrainers] = useState([])
+  const [courses, setCourses] = useState([]) 
   const [searchTerm, setSearchTerm] = useState('')
+  const [selectedCourse, setSelectedCourse] = useState('') 
   const [loading, setLoading] = useState(true)
   
-  // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 5 
+
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: '',
+    specialization: ''
+  })
 
   const navigate = useNavigate()
 
   useEffect(() => {
-    fetchTrainers()
+    fetchInitialData()
   }, [])
 
-  const fetchTrainers = async () => {
-    // Fetch trainers, their profile info, and their assigned courses
-    const { data, error } = await supabase
-      .from('trainers')
-      .select(`
-        id,
-        specialization,
-        is_active,
-        profiles (full_name, email),
-        course_trainers (courses (title))
-      `)
-      .order('created_at', { ascending: true })
+  const fetchInitialData = async () => {
+    // 1. Use the secure function to get trainers (By passes RLS)
+    const { data: trainersData, error } = await supabase.rpc('get_admin_trainers')
 
-    if (!error && data) {
-      setTrainers(data)
+    if (error) {
+      console.error("Error fetching trainers:", error)
+    } else if (trainersData) {
+      setTrainers(trainersData)
     }
+
+    // 2. Fetch Courses for the filter
+    const { data: coursesData } = await supabase
+      .from('courses')
+      .select('id, title')
+      .eq('is_active', true)
+
+    if (coursesData) setCourses(coursesData)
+
     setLoading(false)
   }
 
@@ -41,30 +52,49 @@ function Trainers() {
     navigate('/admin/login')
   }
 
-  // Filter trainers based on search input
+  const handleAddTrainer = async (e) => {
+    e.preventDefault()
+    setIsSubmitting(true)
+
+    // For now, we just insert directly. 
+    // Note: We won't create the Auth account here to avoid permission errors.
+    alert("Creation requires Edge Function. Please add trainers directly via Supabase Dashboard for now.")
+    
+    setIsSubmitting(false)
+    setIsModalOpen(false)
+  }
+
+  const closeModalAndReset = () => {
+    setIsModalOpen(false)
+    setFormData({ fullName: '', email: '', specialization: '' })
+  }
+
   const filteredTrainers = trainers.filter(trainer => {
-    const name = trainer.profiles?.full_name?.toLowerCase() || ''
-    const email = trainer.profiles?.email?.toLowerCase() || ''
+    const name = trainer.full_name?.toLowerCase() || ''
+    const email = trainer.email?.toLowerCase() || ''
     const spec = trainer.specialization?.toLowerCase() || ''
     const search = searchTerm.toLowerCase()
     
-    return name.includes(search) || email.includes(search) || spec.includes(search)
+    const matchesSearch = name.includes(search) || email.includes(search) || spec.includes(search)
+    const matchesCourse = selectedCourse 
+      ? trainer.course_title === courses.find(c => c.id === selectedCourse)?.title
+      : true
+
+    return matchesSearch && matchesCourse
   })
 
-  // Calculate pagination
   const indexOfLastItem = currentPage * itemsPerPage
   const indexOfFirstItem = indexOfLastItem - itemsPerPage
   const currentItems = filteredTrainers.slice(indexOfFirstItem, indexOfLastItem)
   const totalPages = Math.ceil(filteredTrainers.length / itemsPerPage)
 
-  // Generate a fake ID for display (e.g., TRN001)
   const formatId = (index) => `TRN${String(index + 1).padStart(3, '0')}`
 
   return (
-    <div className="min-h-screen bg-[#D8E8ED] flex font-sans">
+    <div className="min-h-screen bg-[#D8E8ED] flex font-sans relative overflow-hidden">
       
       {/* Sidebar */}
-      <div className="w-48 bg-[#1B365D] text-white flex flex-col justify-between py-8 px-6 shadow-md">
+      <div className="w-48 bg-[#1B365D] text-white flex flex-col justify-between py-8 px-6 shadow-md z-10">
         <div className="flex flex-col gap-8">
           <div className="flex flex-col gap-4">
             <p className="text-xs font-medium tracking-wide mb-2">SMS</p>
@@ -87,7 +117,6 @@ function Trainers() {
       {/* Main Content */}
       <div className="flex-1 p-10 md:p-16 flex flex-col relative">
         
-        {/* Header Row */}
         <div className="flex justify-between items-start mb-8">
           <div>
             <h1 className="text-2xl text-black mb-1">Manage Trainers</h1>
@@ -98,7 +127,6 @@ function Trainers() {
           </div>
         </div>
 
-        {/* Controls Row */}
         <div className="flex justify-between items-center mb-8 w-full max-w-4xl">
           <input 
             type="text" 
@@ -112,16 +140,35 @@ function Trainers() {
           />
 
           <div className="flex items-center gap-4 ml-auto">
-            <button className="bg-white text-black text-sm font-medium px-6 py-2.5 shadow-sm border border-gray-200 hover:bg-gray-50">
-              All Courses
-            </button>
-            <button className="bg-white text-black text-sm font-medium px-6 py-2.5 shadow-sm border border-gray-200 hover:bg-gray-50 flex items-center gap-1">
+            <div className="relative">
+              <select
+                value={selectedCourse}
+                onChange={(e) => {
+                  setSelectedCourse(e.target.value)
+                  setCurrentPage(1)
+                }}
+                className="bg-white text-black text-sm font-medium px-6 py-2.5 shadow-sm border border-gray-200 hover:bg-gray-50 outline-none appearance-none cursor-pointer pr-10"
+                style={{ WebkitAppearance: 'none', MozAppearance: 'none' }}
+              >
+                <option value="">All Courses</option>
+                {courses.map(course => (
+                  <option key={course.id} value={course.id}>{course.title}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-black">
+                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/></svg>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setIsModalOpen(true)}
+              className="bg-white text-black text-sm font-medium px-6 py-2.5 shadow-sm border border-gray-200 hover:bg-gray-50 flex items-center gap-1"
+            >
               <span className="text-lg leading-none mb-0.5">+</span> Add trainer
             </button>
           </div>
         </div>
 
-        {/* Table */}
         <div className="w-full max-w-4xl">
           {loading ? (
             <div className="p-8 text-center text-gray-700">Loading trainers...</div>
@@ -141,16 +188,13 @@ function Trainers() {
               <tbody className="text-sm text-black">
                 {currentItems.length > 0 ? (
                   currentItems.map((trainer, index) => {
-                    // Get the first course title for the display, or show N/A
-                    const courseTitle = trainer.course_trainers?.[0]?.courses?.title || 'N/A'
-                    
                     return (
                       <tr key={trainer.id} className="border-b border-gray-200">
                         <td className="py-4 px-4 border-r border-gray-200">{formatId(indexOfFirstItem + index)}</td>
-                        <td className="py-4 px-4 border-r border-gray-200">{trainer.profiles?.full_name || 'Unknown'}</td>
-                        <td className="py-4 px-4 border-r border-gray-200 text-xs">{trainer.profiles?.email || 'N/A'}</td>
+                        <td className="py-4 px-4 border-r border-gray-200">{trainer.full_name || 'Unknown'}</td>
+                        <td className="py-4 px-4 border-r border-gray-200 text-xs">{trainer.email || 'N/A'}</td>
                         <td className="py-4 px-4 border-r border-gray-200">{trainer.specialization || 'General'}</td>
-                        <td className="py-4 px-4 border-r border-gray-200 truncate max-w-[120px]">{courseTitle}</td>
+                        <td className="py-4 px-4 border-r border-gray-200 truncate max-w-[120px]">{trainer.course_title || 'N/A'}</td>
                         <td className="py-4 px-4 border-r border-gray-200">
                           {trainer.is_active ? (
                             <span className="bg-[#6EE7B7] text-black text-xs font-medium px-3 py-1 rounded-sm inline-block">
@@ -180,7 +224,6 @@ function Trainers() {
           )}
         </div>
 
-        {/* Pagination Controls */}
         {!loading && totalPages > 1 && (
           <div className="flex justify-center mt-16">
             <div className="bg-white px-6 py-3 flex items-center gap-6 shadow-sm">
@@ -214,6 +257,68 @@ function Trainers() {
         )}
 
       </div>
+
+      {/* Add Trainer Modal (Simplified for now) */}
+      <div 
+        className={`absolute top-0 right-0 h-full w-[400px] bg-white shadow-2xl transform transition-transform duration-300 ease-in-out z-50 ${isModalOpen ? 'translate-x-0' : 'translate-x-full'}`}
+      >
+        <div className="p-8 flex flex-col h-full">
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-xl font-medium text-black">Add New Trainer</h2>
+            <button onClick={closeModalAndReset} className="text-gray-500 hover:text-black text-2xl leading-none">&times;</button>
+          </div>
+
+          <form onSubmit={handleAddTrainer} className="flex flex-col gap-5 flex-1">
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Full Name</label>
+              <input 
+                type="text" required
+                value={formData.fullName}
+                onChange={(e) => setFormData({...formData, fullName: e.target.value})}
+                className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Email Address</label>
+              <input 
+                type="email" required
+                value={formData.email}
+                onChange={(e) => setFormData({...formData, email: e.target.value})}
+                className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Specialization</label>
+              <input 
+                type="text" required placeholder="e.g. Data Science"
+                value={formData.specialization}
+                onChange={(e) => setFormData({...formData, specialization: e.target.value})}
+                className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
+              />
+            </div>
+
+            <div className="mt-auto pt-6">
+              <button 
+                type="submit" 
+                disabled={isSubmitting}
+                className="w-full bg-[#3B69B8] text-white py-3 rounded-sm hover:bg-[#2d5497] disabled:opacity-50 font-medium transition-colors"
+              >
+                {isSubmitting ? 'Creating...' : 'Create Trainer'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {isModalOpen && (
+        <div 
+          onClick={closeModalAndReset}
+          className="absolute inset-0 bg-black/20 z-40"
+        ></div>
+      )}
+
     </div>
   )
 }

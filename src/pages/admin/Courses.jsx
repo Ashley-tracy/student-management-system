@@ -4,17 +4,29 @@ import { supabase } from '../../lib/supabaseClient'
 
 function Courses() {
   const [courses, setCourses] = useState([])
+  const [trainers, setTrainers] = useState([]) // For the dropdown
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
+  
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [formData, setFormData] = useState({
+    code: '',
+    title: '',
+    duration_weeks: '',
+    trainerId: ''
+  })
+
   const navigate = useNavigate()
 
   useEffect(() => {
-    fetchCourses()
+    fetchInitialData()
   }, [])
 
-  const fetchCourses = async () => {
-    // Fetch courses and join the trainers table to get the trainer's name
-    const { data, error } = await supabase
+  const fetchInitialData = async () => {
+    // 1. Fetch Courses
+    const { data: coursesData, error } = await supabase
       .from('courses')
       .select(`
         id,
@@ -30,15 +42,69 @@ function Courses() {
       `)
       .order('code', { ascending: true })
 
-    if (!error && data) {
-      setCourses(data)
-    }
+    if (!error && coursesData) setCourses(coursesData)
+
+    // 2. Fetch Trainers for the dropdown
+    const { data: trainersData } = await supabase
+      .from('trainers')
+      .select(`id, profiles (full_name)`)
+
+    if (trainersData) setTrainers(trainersData)
+
     setLoading(false)
   }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
     navigate('/admin/login')
+  }
+
+  // Handle Add Course Form Submit
+  const handleAddCourse = async (e) => {
+    e.preventDefault()
+    setIsSubmitting(true)
+
+    // 1. Insert the Course
+    const { data: newCourse, error: courseError } = await supabase
+      .from('courses')
+      .insert({
+        code: formData.code,
+        title: formData.title,
+        duration_weeks: parseInt(formData.duration_weeks),
+        is_active: true
+      })
+      .select()
+      .single()
+
+    if (courseError) {
+      alert('Error creating course: ' + courseError.message)
+      setIsSubmitting(false)
+      return
+    }
+
+    // 2. Assign the Trainer (if one was selected)
+    if (formData.trainerId) {
+      const { error: linkError } = await supabase
+        .from('course_trainers')
+        .insert({
+          course_id: newCourse.id,
+          trainer_id: formData.trainerId
+        })
+      
+      if (linkError) {
+        alert('Course created, but failed to assign trainer: ' + linkError.message)
+      }
+    }
+
+    // 3. Refresh the list and close modal
+    await fetchInitialData()
+    setIsSubmitting(false)
+    closeModalAndReset()
+  }
+
+  const closeModalAndReset = () => {
+    setIsModalOpen(false)
+    setFormData({ code: '', title: '', duration_weeks: '', trainerId: '' })
   }
 
   // Filter courses based on search input
@@ -48,10 +114,10 @@ function Courses() {
   )
 
   return (
-    <div className="min-h-screen bg-[#D8E8ED] flex font-sans">
+    <div className="min-h-screen bg-[#D8E8ED] flex font-sans relative overflow-hidden">
       
       {/* Sidebar */}
-      <div className="w-48 bg-[#1B365D] text-white flex flex-col justify-between py-8 px-6 shadow-md">
+      <div className="w-48 bg-[#1B365D] text-white flex flex-col justify-between py-8 px-6 shadow-md z-10">
         <div className="flex flex-col gap-8">
           <div className="flex flex-col gap-4">
             <p className="text-xs font-medium tracking-wide mb-2">SMS</p>
@@ -77,7 +143,10 @@ function Courses() {
         {/* Header Row */}
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-2xl font-normal text-black">Manage Courses</h1>
-          <button className="bg-[#3B69B8] hover:bg-[#2d5497] text-white text-sm font-medium px-6 py-2.5 rounded-sm shadow-sm transition-colors">
+          <button 
+            onClick={() => setIsModalOpen(true)}
+            className="bg-[#3B69B8] hover:bg-[#2d5497] text-white text-sm font-medium px-6 py-2.5 rounded-sm shadow-sm transition-colors"
+          >
             Add Course
           </button>
         </div>
@@ -112,7 +181,6 @@ function Courses() {
               <tbody className="text-sm text-black">
                 {filteredCourses.length > 0 ? (
                   filteredCourses.map((course) => {
-                    // Extract the trainer name from the nested join data
                     const trainerName = course.course_trainers?.[0]?.trainers?.profiles?.full_name || 'Unassigned'
                     
                     return (
@@ -133,9 +201,7 @@ function Courses() {
                           )}
                         </td>
                         <td className="py-3 px-4 flex gap-3 text-lg">
-                          {/* Edit Icon */}
                           <button className="hover:scale-110 transition-transform">✏️</button>
-                          {/* Delete Icon */}
                           <button className="hover:scale-110 transition-transform">❌</button>
                         </td>
                       </tr>
@@ -152,8 +218,84 @@ function Courses() {
             </table>
           )}
         </div>
-
       </div>
+
+      {/* ADD COURSE SLIDE-OVER MODAL */}
+      <div 
+        className={`absolute top-0 right-0 h-full w-[400px] bg-white shadow-2xl transform transition-transform duration-300 ease-in-out z-50 ${isModalOpen ? 'translate-x-0' : 'translate-x-full'}`}
+      >
+        <div className="p-8 flex flex-col h-full">
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-xl font-medium text-black">Add New Course</h2>
+            <button onClick={closeModalAndReset} className="text-gray-500 hover:text-black text-2xl leading-none">&times;</button>
+          </div>
+
+          <form onSubmit={handleAddCourse} className="flex flex-col gap-5 flex-1">
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Course Code</label>
+              <input 
+                type="text" required placeholder="e.g. CS102"
+                value={formData.code}
+                onChange={(e) => setFormData({...formData, code: e.target.value})}
+                className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Course Title</label>
+              <input 
+                type="text" required placeholder="e.g. Web Development"
+                value={formData.title}
+                onChange={(e) => setFormData({...formData, title: e.target.value})}
+                className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Duration (Weeks)</label>
+              <input 
+                type="number" required placeholder="e.g. 12"
+                value={formData.duration_weeks}
+                onChange={(e) => setFormData({...formData, duration_weeks: e.target.value})}
+                className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm text-gray-700 mb-1">Assign Trainer</label>
+              <select 
+                value={formData.trainerId}
+                onChange={(e) => setFormData({...formData, trainerId: e.target.value})}
+                className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
+              >
+                <option value="">Select a trainer (optional)...</option>
+                {trainers.map(trainer => (
+                  <option key={trainer.id} value={trainer.id}>{trainer.profiles?.full_name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-auto pt-6">
+              <button 
+                type="submit" 
+                disabled={isSubmitting}
+                className="w-full bg-[#3B69B8] text-white py-3 rounded-sm hover:bg-[#2d5497] disabled:opacity-50 font-medium transition-colors"
+              >
+                {isSubmitting ? 'Creating...' : 'Create Course'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {/* Overlay backdrop */}
+      {isModalOpen && (
+        <div 
+          onClick={closeModalAndReset}
+          className="absolute inset-0 bg-black/20 z-40"
+        ></div>
+      )}
+
     </div>
   )
 }
