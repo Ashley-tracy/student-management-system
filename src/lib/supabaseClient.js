@@ -1,12 +1,22 @@
 import { createClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
 
-if (!url || !key) {
-  throw new Error('Missing Supabase env vars. Check .env.local')
+// Temporary debug — remove after confirming login works
+console.log("SUPABASE URL:", supabaseUrl)
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    "Missing Supabase env vars. Check your .env file has VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY, then restart the dev server."
+  )
 }
 
-export const supabase = createClient(url, key, {
-  auth: { persistSession: true, autoRefreshToken: true }
+// Single shared client instance — import this everywhere
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: false,
+  },
 })

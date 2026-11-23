@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabaseClient'
+
+const MAX_ATTEMPTS = 5
+const LOCKOUT_MS = 5 * 60 * 1000 // 5 minutes
 
 function Login() {
   const [email, setEmail] = useState('')
@@ -9,46 +12,99 @@ function Login() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
+  // Check lockout on mount
+  useEffect(() => {
+    const until = parseInt(localStorage.getItem('login_lockout') || '0', 10)
+    if (until && Date.now() < until) {
+      const mins = Math.ceil((until - Date.now()) / 60000)
+      setError(`Too many failed attempts. Try again in ${mins} minute(s).`)
+    }
+  }, [])
+
+  const getAttempts = () => parseInt(localStorage.getItem('login_attempts') || '0', 10)
+  const setAttempts = (n) => localStorage.setItem('login_attempts', String(n))
+  const lockOut = () => {
+    localStorage.setItem('login_lockout', String(Date.now() + LOCKOUT_MS))
+    setAttempts(0)
+  }
+
   const handleLogin = async (e) => {
     e.preventDefault()
+
+    // 1. Lockout gate
+    const lockUntil = parseInt(localStorage.getItem('login_lockout') || '0', 10)
+    if (lockUntil && Date.now() < lockUntil) {
+      const mins = Math.ceil((lockUntil - Date.now()) / 60000)
+      setError(`Too many failed attempts. Try again in ${mins} minute(s).`)
+      return
+    }
+
     setLoading(true)
     setError(null)
 
-    // 1. Sign in
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    const attemptedEmail = email.trim().toLowerCase()
+    const attemptedPassword = password
+    setPassword('') // Clear immediately for security
 
-    if (authError) {
-      setError(authError.message)
+    try {
+      // 2. Authenticate with Supabase Auth
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: attemptedEmail,
+        password: attemptedPassword,
+      })
+
+      if (authError) {
+        const attempts = getAttempts() + 1
+        setAttempts(attempts)
+        if (attempts >= MAX_ATTEMPTS) lockOut()
+
+        console.error('[login]', authError.message)
+        setError('Invalid credentials. Please try again.')
+        setLoading(false)
+        return
+      }
+
+      // 3. Fetch role from profiles table
+      const { data: profile, error: profileError } = await supabase
+        .from('profiles')
+        .select('full_name, role')
+        .eq('id', authData.user.id)
+        .single()
+
+      if (profileError || !profile) {
+        console.error('[login] profile lookup failed', profileError)
+        await supabase.auth.signOut()
+        setError('Account error: Profile not found. Contact an administrator.')
+        setLoading(false)
+        return
+      }
+
+      // 4. Sanitize and check role
+      const userRole = profile.role ? profile.role.toLowerCase().trim() : ''
+
+      // Reset lockout counters on success
+      setAttempts(0)
+      localStorage.removeItem('login_lockout')
+      setEmail('')
+
+      // 5. Route to the correct dashboard
+      if (userRole === 'admin') {
+        navigate('/admin/dashboard', { replace: true })
+      } else if (userRole === 'trainer') {
+        navigate('/trainer/dashboard', { replace: true })
+      } else if (userRole === 'student') {
+        navigate('/student/dashboard', { replace: true })
+      } else {
+        await supabase.auth.signOut()
+        setError(`Unknown user role: "${profile.role}". Please contact an administrator.`)
+      }
+
+    } catch (err) {
+      console.error('[login] unexpected', err)
+      setError('Login failed. Please try again.')
+    } finally {
       setLoading(false)
-      return
     }
-
-    // 2. Use the secure RPC function to get the role safely
-    const { data: role, error: roleError } = await supabase.rpc('get_my_role')
-
-    if (roleError || !role) {
-      await supabase.auth.signOut()
-      setError('Could not verify user role. Please try again.')
-      setLoading(false)
-      return
-    }
-
-    // 3. Route them to the correct dashboard based on role
-    if (role === 'admin') {
-      navigate('/admin/dashboard')
-    } else if (role === 'trainer') {
-      navigate('/trainer/dashboard')
-    } else if (role === 'student') {
-      navigate('/student/dashboard')
-    } else {
-      await supabase.auth.signOut()
-      setError('Unknown user role.')
-    }
-    
-    setLoading(false)
   }
 
   return (
@@ -65,12 +121,12 @@ function Login() {
           </h1>
 
           {error && (
-            <div className="bg-red-50 text-red-600 text-sm p-3 mb-4 rounded text-center">
+            <div role="alert" className="bg-red-50 text-red-600 text-sm p-3 mb-4 rounded text-center">
               {error}
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="flex flex-col gap-5">
+          <form onSubmit={handleLogin} className="flex flex-col gap-5" autoComplete="off" noValidate>
             
             {/* Email Input */}
             <div className="flex flex-col">
@@ -80,6 +136,10 @@ function Login() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
+                autoComplete="off"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck="false"
                 className="border border-gray-400 p-2 text-sm outline-none focus:border-blue-500"
               />
             </div>
@@ -92,6 +152,8 @@ function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                minLength={6}
+                autoComplete="new-password"
                 className="border border-gray-400 p-2 text-sm outline-none focus:border-blue-500"
               />
             </div>
@@ -114,7 +176,7 @@ function Login() {
               Forgot password
             </Link>
             <p>
-              No account? Sign up from admin
+              No account? Contact your administrator.
             </p>
           </div>
 

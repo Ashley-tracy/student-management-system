@@ -10,61 +10,66 @@ function AdminDashboard() {
   const navigate = useNavigate()
   const location = useLocation()
 
+  // Re-fetch data whenever the route changes to this page (e.g., clicking "Dashboard" in sidebar)
   useEffect(() => {
-    const session = location.state?.session
-    const adminName = location.state?.adminName
+    fetchAdminData()
+  }, [location.key])
 
-    if (session) {
-      // Set the name instantly from what we passed from Login
-      setProfile({ full_name: adminName })
-      fetchAdminData(session.user.id)
-    } else {
-      // If they refreshed the page, get the session and fetch everything
-      supabase.auth.getSession().then(({ data: { session } }) => {
-        if (session) {
-          fetchAdminData(session.user.id)
-        } else {
-          navigate('/admin/login')
-        }
-      })
-    }
-  }, [navigate, location.state])
+  const fetchAdminData = async () => {
+    try {
+      // 1. Verify Session
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) {
+        navigate('/admin/login')
+        return
+      }
 
-  const fetchAdminData = async (userId) => {
-    // If we didn't get the name from login (e.g. page refresh), fetch it
-    if (!location.state?.adminName) {
+      // 2. Fetch Admin Profile
       const { data: prof } = await supabase
         .from('profiles')
         .select('full_name')
-        .eq('id', userId)
+        .eq('id', session.user.id)
         .single()
-      setProfile(prof)
+      if (prof) setProfile(prof)
+
+      // 3. Fetch Stats & Recent Students in parallel
+      const [studentsRes, trainersRes, coursesRes, trainingsRes, recentRes] = await Promise.all([
+        supabase.from('students').select('*', { count: 'exact', head: true }),
+        supabase.from('trainers').select('*', { count: 'exact', head: true }),
+        supabase.from('courses').select('*', { count: 'exact', head: true }),
+        // Wrap in try/catch logic if training_programs doesn't exist yet
+        supabase.from('training_programs').select('*', { count: 'exact', head: true }).then(r => r).catch(() => ({ count: 0 })),
+        
+        // Fetch recent students with their profile name and course title
+        supabase
+          .from('students')
+          .select(`
+            created_at, 
+            admission_no, 
+            profiles (full_name), 
+            enrollments (
+              courses (title)
+            )
+          `)
+          .order('created_at', { ascending: false })
+          .limit(3)
+      ])
+      
+      setStats({
+        students: studentsRes.count || 0,
+        trainers: trainersRes.count || 0,
+        courses: coursesRes.count || 0,
+        trainings: trainingsRes?.count || 0 
+      })
+
+      if (recentRes.data) {
+        setRecentStudents(recentRes.data)
+      }
+    } catch (error) {
+      console.error("Dashboard Error:", error)
+    } finally {
+      setLoading(false)
     }
-
-    // Fetch ALL data in parallel so it's instant
-    const [studentsRes, trainersRes, coursesRes, recentRes] = await Promise.all([
-      supabase.from('students').select('*', { count: 'exact', head: true }),
-      supabase.from('trainers').select('*', { count: 'exact', head: true }),
-      supabase.from('courses').select('*', { count: 'exact', head: true }),
-      supabase
-        .from('students')
-        .select(`created_at, admission_no, profiles (full_name), enrollments (courses (title))`)
-        .order('created_at', { ascending: false })
-        .limit(3)
-    ])
-    
-    setStats({
-      students: studentsRes.count || 0,
-      trainers: trainersRes.count || 0,
-      courses: coursesRes.count || 0,
-      trainings: coursesRes.count || 0 
-    })
-
-    if (recentRes.data) {
-      setRecentStudents(recentRes.data)
-    }
-
-    setLoading(false)
   }
 
   const handleLogout = async () => {
@@ -77,10 +82,12 @@ function AdminDashboard() {
   return (
     <div className="min-h-screen bg-[#DCECF2] flex font-sans">
       
+      {/* Sidebar */}
       <div className="w-64 bg-[#1B365D] text-white flex flex-col justify-between py-8 px-8 shadow-md">
         <div className="flex flex-col gap-8">
           <div className="flex flex-col gap-5">
             <p className="text-lg font-medium tracking-wide mb-2">SMS</p>
+            {/* The location.key dependency above ensures clicking this link soft-refreshes the data */}
             <Link to="/admin/dashboard" className="text-sm font-medium hover:text-gray-300">Dashboard</Link>
             <Link to="/admin/students" className="text-sm font-medium hover:text-gray-300">Students</Link>
             <Link to="/admin/trainers" className="text-sm font-medium hover:text-gray-300">Trainers</Link>
@@ -99,17 +106,21 @@ function AdminDashboard() {
         </div>
       </div>
 
+      {/* Main Content */}
       <div className="flex-1 p-10 md:p-16 flex flex-col relative overflow-y-auto">
         
+        {/* Top Right Admin Name */}
         <div className="absolute top-10 right-16">
           <p className="text-sm font-medium text-black">{profile?.full_name || 'Admin'}</p>
         </div>
 
+        {/* Welcome Header */}
         <div className="mb-10 mt-4">
           <h1 className="text-3xl font-normal text-black mb-2">Admin Dashboard</h1>
           <p className="text-sm text-gray-800">Welcome back, {profile?.full_name?.split(' ')[0] || 'Admin'}!</p>
         </div>
 
+        {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
           <div className="bg-white p-6 rounded-sm shadow-sm flex flex-col justify-center h-32">
             <p className="text-xs text-gray-500 mb-2">Total</p>
@@ -135,12 +146,16 @@ function AdminDashboard() {
 
         <div className="flex flex-col lg:flex-row gap-16 flex-1">
           
+          {/* Recent Registrations Table */}
           <div className="flex-1">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl text-black">Recent Registration</h2>
-              <button className="bg-white text-black text-xs font-medium px-5 py-2.5 shadow-sm hover:bg-gray-50 transition-colors">
+              <Link 
+                to="/admin/students" 
+                className="bg-white text-black text-xs font-medium px-5 py-2.5 shadow-sm hover:bg-gray-50 transition-colors"
+              >
                 View All →
-              </button>
+              </Link>
             </div>
             
             <table className="w-full text-left border-collapse">
@@ -154,15 +169,22 @@ function AdminDashboard() {
               <tbody className="text-sm text-black">
                 {recentStudents.length > 0 ? (
                   recentStudents.map((student, i) => (
-                    <tr key={i} className="border-b border-transparent">
-                      <td className="py-4">{student.profiles?.full_name || 'Unknown'}</td>
-                      <td className="py-4">{student.enrollments?.[0]?.courses?.title || 'N/A'}</td>
-                      <td className="py-4">{new Date(student.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                    <tr key={i} className="border-b border-transparent hover:bg-gray-50/50">
+                      <td className="py-4">
+                        {/* Fallback to admission_no or Unknown if profile isn't linked yet */}
+                        {student.profiles?.full_name || student.admission_no || 'Unknown'}
+                      </td>
+                      <td className="py-4">{student.enrollments?.[0]?.courses?.title || 'Not Enrolled'}</td>
+                      <td className="py-4">
+                        {new Date(student.created_at).toLocaleDateString('en-US', { 
+                          month: 'short', day: 'numeric', year: 'numeric' 
+                        })}
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td className="py-4">No recent students</td>
+                    <td className="py-4 text-gray-500">No recent students</td>
                     <td className="py-4">-</td>
                     <td className="py-4">-</td>
                   </tr>
@@ -171,16 +193,27 @@ function AdminDashboard() {
             </table>
           </div>
 
+          {/* Quick Actions */}
           <div className="w-full lg:w-72">
             <h2 className="text-xl text-black mb-6">Quick Actions</h2>
             <div className="flex flex-col gap-4">
-              <Link to="/admin/students" className="bg-white text-black text-sm font-medium px-6 py-4 shadow-sm hover:bg-gray-50 block transition-colors">
+              {/* By appending ?action=new, we can tell the next page to auto-open the Add Modal */}
+              <Link 
+                to="/admin/students?action=new" 
+                className="bg-white text-black text-sm font-medium px-6 py-4 shadow-sm hover:bg-gray-50 block transition-colors"
+              >
                 Add Student
               </Link>
-              <Link to="/admin/trainers" className="bg-white text-black text-sm font-medium px-6 py-4 shadow-sm hover:bg-gray-50 block transition-colors">
+              <Link 
+                to="/admin/trainers?action=new" 
+                className="bg-white text-black text-sm font-medium px-6 py-4 shadow-sm hover:bg-gray-50 block transition-colors"
+              >
                 Add Trainer
               </Link>
-              <Link to="/admin/courses" className="bg-white text-black text-sm font-medium px-6 py-4 shadow-sm hover:bg-gray-50 block transition-colors">
+              <Link 
+                to="/admin/courses?action=new" 
+                className="bg-white text-black text-sm font-medium px-6 py-4 shadow-sm hover:bg-gray-50 block transition-colors"
+              >
                 Add Course
               </Link>
             </div>

@@ -1,16 +1,16 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabaseClient'
 
 function Courses() {
   const [courses, setCourses] = useState([])
-  const [trainers, setTrainers] = useState([]) // For the dropdown
+  const [trainers, setTrainers] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [loading, setLoading] = useState(true)
-  
-  // Modal state
+
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [editingCourse, setEditingCourse] = useState(null)
   const [formData, setFormData] = useState({
     code: '',
     title: '',
@@ -19,39 +19,51 @@ function Courses() {
   })
 
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+
+  useEffect(() => {
+    if (searchParams.get('action') === 'new') setIsModalOpen(true)
+  }, [searchParams])
 
   useEffect(() => {
     fetchInitialData()
   }, [])
 
   const fetchInitialData = async () => {
-    // 1. Fetch Courses
-    const { data: coursesData, error } = await supabase
-      .from('courses')
-      .select(`
-        id,
-        code,
-        title,
-        duration_weeks,
-        is_active,
-        course_trainers (
-          trainers (
-            profiles (full_name)
+    try {
+      const { data: coursesData, error } = await supabase
+        .from('courses')
+        .select(`
+          id,
+          code,
+          title,
+          duration_weeks,
+          is_active,
+          course_trainers (
+            trainers (
+              id,
+              profiles ( full_name )
+            )
           )
-        )
-      `)
-      .order('code', { ascending: true })
+        `)
+        .order('code', { ascending: true })
 
-    if (!error && coursesData) setCourses(coursesData)
+      if (error) {
+        console.error("Error fetching courses:", error)
+      } else {
+        setCourses(coursesData || [])
+      }
 
-    // 2. Fetch Trainers for the dropdown
-    const { data: trainersData } = await supabase
-      .from('trainers')
-      .select(`id, profiles (full_name)`)
+      const { data: trainersData } = await supabase
+        .from('trainers')
+        .select('id, profiles ( full_name )')
 
-    if (trainersData) setTrainers(trainersData)
-
-    setLoading(false)
+      if (trainersData) setTrainers(trainersData)
+    } catch (err) {
+      console.error("Fetch Error:", err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const handleLogout = async () => {
@@ -59,63 +71,119 @@ function Courses() {
     navigate('/admin/login')
   }
 
-  // Handle Add Course Form Submit
-  const handleAddCourse = async (e) => {
+  const handleEditCourse = (course) => {
+    setEditingCourse(course)
+    setFormData({
+      code: course.code || '',
+      title: course.title || '',
+      duration_weeks: course.duration_weeks?.toString() || '',
+      trainerId: course.course_trainers?.[0]?.trainers?.id?.toString() || '',
+    })
+    setIsModalOpen(true)
+  }
+
+  const handleSubmitCourse = async (e) => {
     e.preventDefault()
     setIsSubmitting(true)
 
-    // 1. Insert the Course
-    const { data: newCourse, error: courseError } = await supabase
-      .from('courses')
-      .insert({
-        code: formData.code,
-        title: formData.title,
-        duration_weeks: parseInt(formData.duration_weeks),
-        is_active: true
-      })
-      .select()
-      .single()
+    try {
+      if (editingCourse) {
+        // ---- EDIT ----
+        const { error: courseErr } = await supabase
+          .from('courses')
+          .update({
+            code: formData.code,
+            title: formData.title,
+            duration_weeks: parseInt(formData.duration_weeks) || 12,
+          })
+          .eq('id', editingCourse.id)
+        if (courseErr) throw courseErr
 
-    if (courseError) {
-      alert('Error creating course: ' + courseError.message)
+        // Sync trainer assignment
+        const currentTrainerId = editingCourse.course_trainers?.[0]?.trainers?.id
+        const targetTrainerId = formData.trainerId ? parseInt(formData.trainerId) : null
+
+        if (currentTrainerId !== targetTrainerId) {
+          if (currentTrainerId) {
+            await supabase
+              .from('course_trainers')
+              .delete()
+              .eq('course_id', editingCourse.id)
+              .eq('trainer_id', currentTrainerId)
+          }
+          if (targetTrainerId) {
+            const { error: linkErr } = await supabase
+              .from('course_trainers')
+              .insert({
+                course_id: editingCourse.id,
+                trainer_id: targetTrainerId,
+              })
+            if (linkErr) throw linkErr
+          }
+        }
+
+        await fetchInitialData()
+        closeModalAndReset()
+      } else {
+        // ---- ADD ----
+        const { data: newCourse, error: courseError } = await supabase
+          .from('courses')
+          .insert({
+            code: formData.code,
+            title: formData.title,
+            duration_weeks: parseInt(formData.duration_weeks) || 12,
+            is_active: true
+          })
+          .select()
+          .single()
+        if (courseError) throw courseError
+
+        if (formData.trainerId) {
+          const { error: linkError } = await supabase
+            .from('course_trainers')
+            .insert({
+              course_id: newCourse.id,
+              trainer_id: parseInt(formData.trainerId)
+            })
+          if (linkError) throw linkError
+        }
+
+        await fetchInitialData()
+        closeModalAndReset()
+      }
+    } catch (err) {
+      console.error('[course-submit] failed:', err)
+      alert('Error: ' + err.message)
+    } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleDeleteCourse = async (id) => {
+    if (!confirm('Delete this course? Associated enrollments and trainer links will also be removed.')) return
+
+    const { error } = await supabase.from('courses').delete().eq('id', id)
+    if (error) {
+      alert('Delete failed: ' + error.message)
       return
     }
-
-    // 2. Assign the Trainer (if one was selected)
-    if (formData.trainerId) {
-      const { error: linkError } = await supabase
-        .from('course_trainers')
-        .insert({
-          course_id: newCourse.id,
-          trainer_id: formData.trainerId
-        })
-      
-      if (linkError) {
-        alert('Course created, but failed to assign trainer: ' + linkError.message)
-      }
-    }
-
-    // 3. Refresh the list and close modal
     await fetchInitialData()
-    setIsSubmitting(false)
-    closeModalAndReset()
   }
 
   const closeModalAndReset = () => {
     setIsModalOpen(false)
+    setEditingCourse(null)
     setFormData({ code: '', title: '', duration_weeks: '', trainerId: '' })
   }
 
-  // Filter courses based on search input
-  const filteredCourses = courses.filter(course => 
-    course.title.toLowerCase().includes(searchTerm.toLowerCase()) || 
+  const filteredCourses = courses.filter(course =>
+    course.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
     course.code.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
   return (
     <div className="min-h-screen bg-[#D8E8ED] flex font-sans relative overflow-hidden">
-      
+
       {/* Sidebar */}
       <div className="w-48 bg-[#1B365D] text-white flex flex-col justify-between py-8 px-6 shadow-md z-10">
         <div className="flex flex-col gap-8">
@@ -139,11 +207,10 @@ function Courses() {
 
       {/* Main Content */}
       <div className="flex-1 p-10 md:p-16 flex flex-col relative">
-        
-        {/* Header Row */}
+
         <div className="flex justify-between items-center mb-8">
           <h1 className="text-2xl font-normal text-black">Manage Courses</h1>
-          <button 
+          <button
             onClick={() => setIsModalOpen(true)}
             className="bg-[#3B69B8] hover:bg-[#2d5497] text-white text-sm font-medium px-6 py-2.5 rounded-sm shadow-sm transition-colors"
           >
@@ -151,10 +218,9 @@ function Courses() {
           </button>
         </div>
 
-        {/* Search Bar */}
         <div className="mb-6">
-          <input 
-            type="text" 
+          <input
+            type="text"
             placeholder="Search courses...."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -162,7 +228,6 @@ function Courses() {
           />
         </div>
 
-        {/* Table Container */}
         <div className="bg-white w-full max-w-5xl shadow-sm border border-gray-200">
           {loading ? (
             <div className="p-8 text-center text-gray-500">Loading courses...</div>
@@ -181,14 +246,17 @@ function Courses() {
               <tbody className="text-sm text-black">
                 {filteredCourses.length > 0 ? (
                   filteredCourses.map((course) => {
-                    const trainerName = course.course_trainers?.[0]?.trainers?.profiles?.full_name || 'Unassigned'
-                    
+                    const trainerNames = (course.course_trainers || [])
+                      .map(ct => ct.trainers?.profiles?.full_name)
+                      .filter(Boolean)
+                    const trainerDisplay = trainerNames.length > 0 ? trainerNames.join(', ') : 'Unassigned'
+
                     return (
                       <tr key={course.id} className="border-b border-gray-300">
                         <td className="py-3 px-4 border-r border-gray-300">{course.code}</td>
                         <td className="py-3 px-4 border-r border-gray-300">{course.title}</td>
-                        <td className="py-3 px-4 border-r border-gray-300">{course.duration_weeks} Months</td>
-                        <td className="py-3 px-4 border-r border-gray-300">{trainerName}</td>
+                        <td className="py-3 px-4 border-r border-gray-300">{course.duration_weeks} Weeks</td>
+                        <td className="py-3 px-4 border-r border-gray-300">{trainerDisplay}</td>
                         <td className="py-3 px-4 border-r border-gray-300">
                           {course.is_active ? (
                             <span className="bg-[#6EE7B7] text-black text-xs font-medium px-4 py-1 rounded-sm">
@@ -201,8 +269,16 @@ function Courses() {
                           )}
                         </td>
                         <td className="py-3 px-4 flex gap-3 text-lg">
-                          <button className="hover:scale-110 transition-transform">✏️</button>
-                          <button className="hover:scale-110 transition-transform">❌</button>
+                          <button
+                            onClick={() => handleEditCourse(course)}
+                            className="hover:scale-110 transition-transform"
+                            title="Edit"
+                          >✏️</button>
+                          <button
+                            onClick={() => handleDeleteCourse(course.id)}
+                            className="hover:scale-110 transition-transform"
+                            title="Delete"
+                          >❌</button>
                         </td>
                       </tr>
                     )
@@ -220,80 +296,82 @@ function Courses() {
         </div>
       </div>
 
-      {/* ADD COURSE SLIDE-OVER MODAL */}
-      <div 
+      {/* Add/Edit Course Modal */}
+      <div
         className={`absolute top-0 right-0 h-full w-[400px] bg-white shadow-2xl transform transition-transform duration-300 ease-in-out z-50 ${isModalOpen ? 'translate-x-0' : 'translate-x-full'}`}
       >
         <div className="p-8 flex flex-col h-full">
           <div className="flex justify-between items-center mb-8">
-            <h2 className="text-xl font-medium text-black">Add New Course</h2>
+            <h2 className="text-xl font-medium text-black">
+              {editingCourse ? 'Edit Course' : 'Add New Course'}
+            </h2>
             <button onClick={closeModalAndReset} className="text-gray-500 hover:text-black text-2xl leading-none">&times;</button>
           </div>
 
-          <form onSubmit={handleAddCourse} className="flex flex-col gap-5 flex-1">
+          <form onSubmit={handleSubmitCourse} className="flex flex-col gap-5 flex-1">
             <div>
               <label className="block text-sm text-gray-700 mb-1">Course Code</label>
-              <input 
+              <input
                 type="text" required placeholder="e.g. CS102"
                 value={formData.code}
-                onChange={(e) => setFormData({...formData, code: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, code: e.target.value })}
                 className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
               />
             </div>
 
             <div>
               <label className="block text-sm text-gray-700 mb-1">Course Title</label>
-              <input 
+              <input
                 type="text" required placeholder="e.g. Web Development"
                 value={formData.title}
-                onChange={(e) => setFormData({...formData, title: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                 className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
               />
             </div>
 
             <div>
               <label className="block text-sm text-gray-700 mb-1">Duration (Weeks)</label>
-              <input 
+              <input
                 type="number" required placeholder="e.g. 12"
                 value={formData.duration_weeks}
-                onChange={(e) => setFormData({...formData, duration_weeks: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, duration_weeks: e.target.value })}
                 className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
               />
             </div>
 
             <div>
               <label className="block text-sm text-gray-700 mb-1">Assign Trainer</label>
-              <select 
+              <select
                 value={formData.trainerId}
-                onChange={(e) => setFormData({...formData, trainerId: e.target.value})}
+                onChange={(e) => setFormData({ ...formData, trainerId: e.target.value })}
                 className="w-full bg-[#F4F4F4] p-3 text-sm outline-none border border-transparent focus:border-[#3B69B8]"
               >
                 <option value="">Select a trainer (optional)...</option>
                 {trainers.map(trainer => (
-                  <option key={trainer.id} value={trainer.id}>{trainer.profiles?.full_name}</option>
+                  <option key={trainer.id} value={trainer.id}>
+                    {trainer.profiles?.full_name || `Trainer #${trainer.id}`}
+                  </option>
                 ))}
               </select>
             </div>
 
             <div className="mt-auto pt-6">
-              <button 
-                type="submit" 
+              <button
+                type="submit"
                 disabled={isSubmitting}
                 className="w-full bg-[#3B69B8] text-white py-3 rounded-sm hover:bg-[#2d5497] disabled:opacity-50 font-medium transition-colors"
               >
-                {isSubmitting ? 'Creating...' : 'Create Course'}
+                {isSubmitting
+                  ? (editingCourse ? 'Saving...' : 'Creating...')
+                  : (editingCourse ? 'Save Changes' : 'Create Course')}
               </button>
             </div>
           </form>
         </div>
       </div>
 
-      {/* Overlay backdrop */}
       {isModalOpen && (
-        <div 
-          onClick={closeModalAndReset}
-          className="absolute inset-0 bg-black/20 z-40"
-        ></div>
+        <div onClick={closeModalAndReset} className="absolute inset-0 bg-black/20 z-40"></div>
       )}
 
     </div>

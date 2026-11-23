@@ -28,27 +28,27 @@ function Landing() {
         </p>
       </div>
 
-      {/* Bottom White Feature Cards */}
+      {/* Bottom White Feature Cards - Visual Only */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-auto pt-24 pb-4">
         
         {/* Card 1 */}
-        <div className="bg-white rounded-sm p-5 shadow-sm h-28 flex flex-col justify-center">
-          <span className="text-black text-sm font-medium leading-tight">Manage<br />Students</span>
+        <div className="bg-white rounded-sm p-6 shadow-sm h-32 flex flex-col justify-center transition-all duration-200 hover:shadow-md">
+          <span className="text-black text-lg font-medium leading-tight">Manage<br />Students</span>
         </div>
         
         {/* Card 2 */}
-        <div className="bg-white rounded-sm p-5 shadow-sm h-28 flex flex-col justify-center">
-          <span className="text-black text-sm font-medium leading-tight">Register<br />Courses</span>
+        <div className="bg-white rounded-sm p-6 shadow-sm h-32 flex flex-col justify-center transition-all duration-200 hover:shadow-md">
+          <span className="text-black text-lg font-medium leading-tight">Register<br />Courses</span>
         </div>
         
         {/* Card 3 */}
-        <div className="bg-white rounded-sm p-5 shadow-sm h-28 flex flex-col justify-center items-center">
-          <span className="text-black text-sm font-medium">Track Training</span>
+        <div className="bg-white rounded-sm p-6 shadow-sm h-32 flex flex-col justify-center items-center transition-all duration-200 hover:shadow-md">
+          <span className="text-black text-lg font-medium">Track Training</span>
         </div>
         
         {/* Card 4 */}
-        <div className="bg-white rounded-sm p-5 shadow-sm h-28 flex flex-col justify-center items-center">
-          <span className="text-black text-sm font-medium">View Reports</span>
+        <div className="bg-white rounded-sm p-6 shadow-sm h-32 flex flex-col justify-center items-center transition-all duration-200 hover:shadow-md">
+          <span className="text-black text-lg font-medium">View Reports</span>
         </div>
 
       </div>
